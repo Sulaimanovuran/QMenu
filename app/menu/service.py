@@ -10,8 +10,8 @@ class MenuService:
     def __init__(self, repo: MenuRepository):
         self.repo = repo
 
-    async def list_categories(self, branch_id: int) -> list[MenuCategory]:
-        return await self.repo.list_categories(branch_id)
+    async def list_categories(self, branch_id: int, limit: int, offset: int) -> tuple[list[MenuCategory], int]:
+        return await self.repo.list_categories(branch_id, limit, offset)
 
     async def create_category(self, branch_id: int, data: CategoryIn) -> MenuCategory:
         return await self.repo.create_category(branch_id, data)
@@ -28,8 +28,8 @@ class MenuService:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Категория не найдена")
         return await self.repo.update_category(cat, data)
 
-    async def list_items(self, branch_id: int) -> list[MenuItem]:
-        return await self.repo.list_items(branch_id)
+    async def list_items(self, branch_id: int, limit: int, offset: int) -> tuple[list[MenuItem], int]:
+        return await self.repo.list_items(branch_id, limit, offset)
 
     async def create_item(self, branch_id: int, data: MenuItemIn) -> MenuItem:
         cat = await self.repo.get_category(data.category_id)

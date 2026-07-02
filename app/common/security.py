@@ -18,12 +18,15 @@ def new_token(nbytes: int = 24) -> str:
 async def get_current_employee(
     branch_id: int,
     user: GetUser = Depends(get_current_user),  # type: ignore
-) -> Employee:
+) -> Optional[Employee]:
     """Текущий пользователь как активный сотрудник конкретного филиала.
 
     Используется на эндпоинтах персонала (модерация, KDS, управление).
-    branch_id берётся из пути.
+    branch_id берётся из пути. Супер-админ (User.is_superadmin) проходит без
+    записи employee — возвращается None, вызывающий код должен это учитывать.
     """
+    if user.is_superadmin:
+        return None
     employee = (
         await Employee.filter(user_id=user.id, branch_id=branch_id, is_active=True)
         .prefetch_related("role")
@@ -41,12 +44,15 @@ async def require_branch_owner(
     branch_id: int,
     user: GetUser = Depends(get_current_user),  # type: ignore
 ):
-    """Пускает владельца компании, которой принадлежит филиал.
+    """Пускает владельца компании, которой принадлежит филиал, или супер-админа.
 
     Используется для bootstrap-операций (назначение первых сотрудников),
     где проверка по таблице employee невозможна — владелец ещё не сотрудник.
     """
     from app.models import Branch
+
+    if user.is_superadmin:
+        return user
 
     branch = await Branch.filter(id=branch_id).prefetch_related("company").first()
     if not branch:
@@ -59,7 +65,7 @@ async def require_branch_owner(
 
 
 def require_manage(*allowed_codes: str):
-    """Пускает либо владельца компании филиала, либо сотрудника с нужной ролью.
+    """Пускает супер-админа, владельца компании филиала или сотрудника с ролью.
 
     Решает проблему bootstrap: владелец управляет меню/столами сразу,
     не будучи записанным в employee, а делегированные сотрудники — по роли.
@@ -70,6 +76,9 @@ def require_manage(*allowed_codes: str):
         user: GetUser = Depends(get_current_user),  # type: ignore
     ):
         from app.models import Branch, Employee
+
+        if user.is_superadmin:
+            return user
 
         branch = await Branch.filter(id=branch_id).prefetch_related("company").first()
         if not branch:
@@ -89,10 +98,10 @@ def require_manage(*allowed_codes: str):
 
 
 def require_staff_action(*allowed_codes: str):
-    """Как require_manage, но возвращает employee_id (или None для владельца).
+    """Как require_manage, но возвращает employee_id (или None для владельца/супер-админа).
 
     Нужно для операций, фиксирующих исполнителя (moderated_by): официант ->
-    его employee.id; владелец без записи employee -> None.
+    его employee.id; владелец/супер-админ без записи employee -> None.
     """
 
     async def _checker(
@@ -100,6 +109,9 @@ def require_staff_action(*allowed_codes: str):
         user: GetUser = Depends(get_current_user),  # type: ignore
     ) -> Optional[int]:
         from app.models import Branch, Employee
+
+        if user.is_superadmin:
+            return None
 
         branch = await Branch.filter(id=branch_id).prefetch_related("company").first()
         if not branch:
@@ -119,13 +131,19 @@ def require_staff_action(*allowed_codes: str):
 
 
 def require_roles(*allowed_codes: str):
-    """Фабрика зависимости: пускает только сотрудников с нужной ролью.
+    """Фабрика зависимости: пускает только сотрудников с нужной ролью (или супер-админа).
 
-    Пример: Depends(require_roles("owner", "admin", "manager"))
+    Пример: Depends(require_roles("owner", "branch_admin"))
     """
 
-    async def _checker(employee: Employee = Depends(get_current_employee)) -> Employee:
-        if employee.role.code not in allowed_codes:
+    async def _checker(
+        branch_id: int,
+        user: GetUser = Depends(get_current_user),  # type: ignore
+        employee: Optional[Employee] = Depends(get_current_employee),
+    ) -> Optional[Employee]:
+        if user.is_superadmin:
+            return employee
+        if not employee or employee.role.code not in allowed_codes:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Требуется роль: {', '.join(allowed_codes)}",
@@ -136,7 +154,7 @@ def require_roles(*allowed_codes: str):
 
 
 # ── Необязательная авторизация (для эндпоинтов, доступных и гостю, и персоналу) ─
-_optional_oauth2 = OAuth2PasswordBearer(tokenUrl="/api/v1/user/login", auto_error=False)
+_optional_oauth2 = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
 
 
 async def optional_current_user(token: Optional[str] = Depends(_optional_oauth2)):

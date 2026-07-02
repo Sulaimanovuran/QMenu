@@ -7,11 +7,19 @@ from app.common.schemas import CompanyIn, BranchIn, BranchUpdate
 
 class CompanyRepository:
     # ── Компании ─────────────────────────────────────────────────────────────
-    async def list_companies(self, owner_id: int) -> list[Company]:
-        return await Company.filter(owner_id=owner_id).all()
+    async def list_companies(
+        self, owner_id: Optional[int], limit: int, offset: int
+    ) -> tuple[list[Company], int]:
+        qs = Company.all() if owner_id is None else Company.filter(owner_id=owner_id)
+        total = await qs.count()
+        items = await qs.offset(offset).limit(limit).all()
+        return items, total
 
-    async def get_company(self, company_id: int, owner_id: int) -> Optional[Company]:
-        return await Company.filter(id=company_id, owner_id=owner_id).first()
+    async def get_company(self, company_id: int, owner_id: Optional[int]) -> Optional[Company]:
+        qs = Company.filter(id=company_id)
+        if owner_id is not None:
+            qs = qs.filter(owner_id=owner_id)
+        return await qs.first()
 
     async def create_company(self, data: CompanyIn, owner_id: int) -> Company:
         return await Company.create(title=data.title, owner_id=owner_id)
@@ -20,8 +28,11 @@ class CompanyRepository:
         await company.delete()
 
     # ── Филиалы ──────────────────────────────────────────────────────────────
-    async def list_branches(self, company_id: int) -> list[Branch]:
-        return await Branch.filter(company_id=company_id).all()
+    async def list_branches(self, company_id: int, limit: int, offset: int) -> tuple[list[Branch], int]:
+        qs = Branch.filter(company_id=company_id)
+        total = await qs.count()
+        items = await qs.offset(offset).limit(limit).all()
+        return items, total
 
     async def get_branch(self, branch_id: int) -> Optional[Branch]:
         return await Branch.filter(id=branch_id).first()

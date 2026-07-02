@@ -51,33 +51,28 @@ class OrderRepository:
             .first()
         )
 
-    async def list_by_session(self, session_id: int) -> list[Order]:
-        return (
-            await Order.filter(session_id=session_id)
-            .prefetch_related(*_DETAIL_PREFETCH)
-            .all()
-        )
+    async def list_by_session(self, session_id: int, limit: int, offset: int) -> tuple[list[Order], int]:
+        qs = Order.filter(session_id=session_id)
+        total = await qs.count()
+        items = await qs.prefetch_related(*_DETAIL_PREFETCH).offset(offset).limit(limit).all()
+        return items, total
 
-    async def pending_for_branch(self, branch_id: int) -> list[Order]:
+    async def pending_for_branch(self, branch_id: int, limit: int, offset: int) -> tuple[list[Order], int]:
         """Очередь модерации: pending-заказы всех сессий филиала."""
-        return (
-            await Order.filter(
-                status=Order.PENDING, session__table__branch_id=branch_id
-            )
-            .prefetch_related(*_DETAIL_PREFETCH)
-            .all()
-        )
+        qs = Order.filter(status=Order.PENDING, session__table__branch_id=branch_id)
+        total = await qs.count()
+        items = await qs.prefetch_related(*_DETAIL_PREFETCH).offset(offset).limit(limit).all()
+        return items, total
 
-    async def kitchen_for_branch(self, branch_id: int) -> list[Order]:
+    async def kitchen_for_branch(self, branch_id: int, limit: int, offset: int) -> tuple[list[Order], int]:
         """Для KDS: заказы, ушедшие на кухню (approved/cooking/ready)."""
-        return (
-            await Order.filter(
-                status__in=Order.KITCHEN_STATUSES,
-                session__table__branch_id=branch_id,
-            )
-            .prefetch_related(*_DETAIL_PREFETCH)
-            .all()
+        qs = Order.filter(
+            status__in=Order.KITCHEN_STATUSES,
+            session__table__branch_id=branch_id,
         )
+        total = await qs.count()
+        items = await qs.prefetch_related(*_DETAIL_PREFETCH).offset(offset).limit(limit).all()
+        return items, total
 
     async def save(self, order: Order) -> None:
         await order.save()

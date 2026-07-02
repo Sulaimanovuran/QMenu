@@ -11,8 +11,8 @@ class StaffService:
     def __init__(self, repo: StaffRepository):
         self.repo = repo
 
-    async def list_employees(self, branch_id: int) -> list[Employee]:
-        return await self.repo.list_employees(branch_id)
+    async def list_employees(self, branch_id: int, limit: int, offset: int) -> tuple[list[Employee], int]:
+        return await self.repo.list_employees(branch_id, limit, offset)
 
     async def add_employee(self, branch_id: int, data: EmployeeIn) -> Employee:
         if data.role_code not in FIXED_ROLES:
@@ -51,4 +51,4 @@ class StaffService:
 
     async def search_users(self, query: str) -> list[dict]:
         users = await self.repo.search_users(query)
-        return [{"id": u.id, "name": u.name} for u in users]
+        return [{"id": u.id, "login": u.login, "full_name": u.full_name} for u in users]

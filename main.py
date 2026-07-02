@@ -1,12 +1,20 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from tortoise import Tortoise
 from tortoise.contrib.fastapi import register_tortoise
 
 from config import settings
 from app.router import api_router
+from app.common.errors import (
+    AppError,
+    app_error_handler,
+    http_exception_handler,
+    validation_exception_handler,
+    unhandled_exception_handler,
+)
 
 
 @asynccontextmanager
@@ -35,6 +43,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.add_exception_handler(AppError, app_error_handler)
+app.add_exception_handler(HTTPException, http_exception_handler)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(Exception, unhandled_exception_handler)
 
 app.include_router(api_router, prefix="/api/v1")
 

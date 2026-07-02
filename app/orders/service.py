@@ -92,11 +92,17 @@ class OrderService:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Заказ не найден")
         return self._serialize(order)
 
-    async def order_detail_guarded(self, order_id: int, device_token: str | None, user_id: int | None) -> dict:
-        """Детали заказа с проверкой доступа: участник сессии ИЛИ сотрудник/владелец.
+    async def order_detail_guarded(
+        self,
+        order_id: int,
+        device_token: str | None,
+        user_id: int | None,
+        is_superadmin: bool = False,
+    ) -> dict:
+        """Детали заказа с проверкой доступа: участник сессии ИЛИ сотрудник/владелец/супер-админ.
 
         device_token — для гостя (участника сессии заказа).
-        user_id — для персонала: сотрудник филиала или владелец компании.
+        user_id — для персонала: сотрудник филиала, владелец компании или супер-админ.
         """
         from app.models import SessionParticipant, Employee, Branch
 
@@ -112,8 +118,10 @@ class OrderService:
             if is_participant:
                 return self._serialize(order)
 
-        # 2) персонал — сотрудник филиала или владелец компании
+        # 2) персонал — супер-админ, сотрудник филиала или владелец компании
         if user_id is not None:
+            if is_superadmin:
+                return self._serialize(order)
             branch_id = order.session.table.branch_id
             is_staff = await Employee.filter(
                 user_id=user_id, branch_id=branch_id, is_active=True
@@ -126,14 +134,14 @@ class OrderService:
 
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа к этому заказу")
 
-    async def list_session_orders(self, session_id: int) -> list[dict]:
-        orders = await self.repo.list_by_session(session_id)
-        return [self._serialize(o) for o in orders]
+    async def list_session_orders(self, session_id: int, limit: int, offset: int) -> tuple[list[dict], int]:
+        orders, total = await self.repo.list_by_session(session_id, limit, offset)
+        return [self._serialize(o) for o in orders], total
 
     # ── Официант (модерация) ─────────────────────────────────────────────────
-    async def moderation_queue(self, branch_id: int) -> list[dict]:
-        orders = await self.repo.pending_for_branch(branch_id)
-        return [self._serialize(o) for o in orders]
+    async def moderation_queue(self, branch_id: int, limit: int, offset: int) -> tuple[list[dict], int]:
+        orders, total = await self.repo.pending_for_branch(branch_id, limit, offset)
+        return [self._serialize(o) for o in orders], total
 
     async def approve(self, branch_id: int, order_id: int, employee_id) -> dict:
         order = await self._pending_order(branch_id, order_id)
@@ -151,9 +159,9 @@ class OrderService:
         return await self.order_detail(order.id)
 
     # ── Кухня (KDS) ──────────────────────────────────────────────────────────
-    async def kitchen_board(self, branch_id: int) -> list[dict]:
-        orders = await self.repo.kitchen_for_branch(branch_id)
-        return [self._serialize(o) for o in orders]
+    async def kitchen_board(self, branch_id: int, limit: int, offset: int) -> tuple[list[dict], int]:
+        orders, total = await self.repo.kitchen_for_branch(branch_id, limit, offset)
+        return [self._serialize(o) for o in orders], total
 
     async def change_status(self, branch_id: int, order_id: int, new_status: str) -> dict:
         order = await self._order_in_branch(branch_id, order_id)
@@ -210,6 +218,9 @@ class OrderService:
             "total_minor": order.total_minor,
             "comment": order.comment,
             "reject_reason": order.reject_reason,
+            # кто обработал модерацию (branch_admin/waiter -> их employee_id;
+            # владелец/супер-админ без записи employee -> None)
+            "moderated_by": order.moderated_by_id,
             "items": [
                 {
                     "id": it.id,

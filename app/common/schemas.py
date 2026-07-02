@@ -4,6 +4,12 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 
+# ── Auth ─────────────────────────────────────────────────────────────────────
+class LoginIn(BaseModel):
+    login: str
+    password: str
+
+
 # ── Компании / филиалы ───────────────────────────────────────────────────────
 class CompanyIn(BaseModel):
     title: str = Field(max_length=50)

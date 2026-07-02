@@ -9,6 +9,9 @@ DB_URL = config("DB_URL", default="sqlite://db.sqlite3")
 
 PUBLIC_BASE_URL = config("PUBLIC_BASE_URL", default="http://localhost:3000")
 
+ACCESS_TOKEN_TTL_MINUTES = config("ACCESS_TOKEN_TTL_MINUTES", default=30, cast=int)
+REFRESH_TOKEN_TTL_DAYS = config("REFRESH_TOKEN_TTL_DAYS", default=30, cast=int)
+
 CORS_ORIGINS = [
     "http://127.0.0.1:3000",
     "http://localhost:3000",

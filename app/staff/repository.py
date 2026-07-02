@@ -1,16 +1,22 @@
 """Доступ к данным: сотрудники филиала."""
 from typing import Optional
 
+from tortoise.expressions import Q
+
 from app.models import Employee, Role, User
 
 
 class StaffRepository:
-    async def list_employees(self, branch_id: int) -> list[Employee]:
-        return (
-            await Employee.filter(branch_id=branch_id)
-            .prefetch_related("user", "role")
+    async def list_employees(self, branch_id: int, limit: int, offset: int) -> tuple[list[Employee], int]:
+        qs = Employee.filter(branch_id=branch_id)
+        total = await qs.count()
+        items = (
+            await qs.prefetch_related("user", "role")
+            .offset(offset)
+            .limit(limit)
             .all()
         )
+        return items, total
 
     async def get_role(self, code: str) -> Optional[Role]:
         return await Role.filter(code=code).first()
@@ -45,4 +51,10 @@ class StaffRepository:
         )
 
     async def search_users(self, query: str, limit: int = 20):
-        return await User.filter(name__icontains=query).limit(limit).all()
+        return (
+            await User.filter(
+                Q(login__icontains=query) | Q(full_name__icontains=query)
+            )
+            .limit(limit)
+            .all()
+        )

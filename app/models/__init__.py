@@ -8,6 +8,7 @@ from tortoise import Tortoise
 
 from .roles import Role
 from .users import User
+from .auth import RefreshToken
 from .companies import Company, Branch
 from .staff import Employee
 from .menu import MenuCategory, MenuItem
@@ -66,7 +67,7 @@ GetOrderItem = pydantic_model_creator(
 )
 
 __all__ = [
-    "Role", "User", "Company", "Branch", "Employee",
+    "Role", "User", "RefreshToken", "Company", "Branch", "Employee",
     "MenuCategory", "MenuItem", "Table", "TableSession",
     "SessionParticipant", "Order", "OrderItem",
     "GetCompany", "CreateCompany", "GetBranch", "CreateBranch",

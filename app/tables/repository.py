@@ -5,8 +5,11 @@ from app.models import Table
 
 
 class TableRepository:
-    async def list_tables(self, branch_id: int) -> list[Table]:
-        return await Table.filter(branch_id=branch_id).all()
+    async def list_tables(self, branch_id: int, limit: int, offset: int) -> tuple[list[Table], int]:
+        qs = Table.filter(branch_id=branch_id)
+        total = await qs.count()
+        items = await qs.offset(offset).limit(limit).all()
+        return items, total
 
     async def get_table(self, table_id: int) -> Optional[Table]:
         return await Table.filter(id=table_id).first()

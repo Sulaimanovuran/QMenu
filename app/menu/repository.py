@@ -7,8 +7,11 @@ from app.common.schemas import CategoryIn, MenuItemIn, MenuItemUpdate
 
 class MenuRepository:
     # ── Категории ────────────────────────────────────────────────────────────
-    async def list_categories(self, branch_id: int) -> list[MenuCategory]:
-        return await MenuCategory.filter(branch_id=branch_id).all()
+    async def list_categories(self, branch_id: int, limit: int, offset: int) -> tuple[list[MenuCategory], int]:
+        qs = MenuCategory.filter(branch_id=branch_id)
+        total = await qs.count()
+        items = await qs.offset(offset).limit(limit).all()
+        return items, total
 
     async def create_category(self, branch_id: int, data: CategoryIn) -> MenuCategory:
         return await MenuCategory.create(
@@ -22,8 +25,11 @@ class MenuRepository:
         await category.delete()
 
     # ── Позиции ──────────────────────────────────────────────────────────────
-    async def list_items(self, branch_id: int) -> list[MenuItem]:
-        return await MenuItem.filter(category__branch_id=branch_id).all()
+    async def list_items(self, branch_id: int, limit: int, offset: int) -> tuple[list[MenuItem], int]:
+        qs = MenuItem.filter(category__branch_id=branch_id)
+        total = await qs.count()
+        items = await qs.offset(offset).limit(limit).all()
+        return items, total
 
     async def get_item(self, item_id: int) -> Optional[MenuItem]:
         return await MenuItem.filter(id=item_id).first()

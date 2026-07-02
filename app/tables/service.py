@@ -11,8 +11,8 @@ class TableService:
     def __init__(self, repo: TableRepository):
         self.repo = repo
 
-    async def list_tables(self, branch_id: int) -> list[Table]:
-        return await self.repo.list_tables(branch_id)
+    async def list_tables(self, branch_id: int, limit: int, offset: int) -> tuple[list[Table], int]:
+        return await self.repo.list_tables(branch_id, limit, offset)
 
     async def create_table(self, branch_id: int, data: TableIn) -> Table:
         return await self.repo.create_table(

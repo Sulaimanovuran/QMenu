@@ -1,4 +1,4 @@
-"""Эндпоинты управления столами (персонал).
+"""Эндпоинты управления столами (персонал, CRM).
 
 Table DTO отдаёт qr_token и public_url, чтобы фронт мог собрать QR-ссылку.
 PUBLIC_BASE_URL берётся из настроек (для прод-домена), по умолчанию localhost.
@@ -7,13 +7,15 @@ from fastapi import APIRouter, Depends
 
 from app.common.schemas import TableIn, TableUpdate
 from app.common.security import require_manage
+from app.common.pagination import PageParams
+from app.common.responses import ok, paginated
 from config import settings
 from .service import TableService
 from .repository import TableRepository
 
 tableRouter = APIRouter()
 service = TableService(TableRepository())
-MANAGE = require_manage("admin", "manager")
+MANAGE = require_manage("branch_admin")
 
 
 def _serialize(t) -> dict:
@@ -30,15 +32,15 @@ def _serialize(t) -> dict:
 
 
 @tableRouter.get("/branches/{branch_id}/tables")
-async def list_tables(branch_id: int, _=Depends(MANAGE)):
-    tables = await service.list_tables(branch_id)
-    return [_serialize(t) for t in tables]
+async def list_tables(branch_id: int, page: PageParams = Depends(), _=Depends(MANAGE)):
+    tables, total = await service.list_tables(branch_id, page.limit, page.offset)
+    return paginated([_serialize(t) for t in tables], total, page.limit, page.page)
 
 
 @tableRouter.post("/branches/{branch_id}/tables", status_code=201)
 async def create_table(branch_id: int, data: TableIn, _=Depends(MANAGE)):
     table = await service.create_table(branch_id, data)
-    return _serialize(table)
+    return ok(_serialize(table), "Стол создан")
 
 
 @tableRouter.patch("/branches/{branch_id}/tables/{table_id}")
@@ -46,7 +48,7 @@ async def update_table(
     branch_id: int, table_id: int, data: TableUpdate, _=Depends(MANAGE)
 ):
     table = await service.update_table(branch_id, table_id, data)
-    return _serialize(table)
+    return ok(_serialize(table))
 
 
 @tableRouter.delete("/branches/{branch_id}/tables/{table_id}", status_code=204)
