@@ -32,7 +32,7 @@ class OrderService:
     async def create_order(self, session_id: int, device_token: str, data: OrderIn) -> dict:
         session = (
             await TableSession.filter(id=session_id)
-            .prefetch_related("table")
+            .prefetch_related("table__branch")
             .first()
         )
         if not session:
@@ -40,12 +40,19 @@ class OrderService:
         if session.status != TableSession.OPEN:
             raise HTTPException(status.HTTP_409_CONFLICT, "Сессия закрыта")
 
+        branch = session.table.branch
+
         participant = await SessionParticipant.filter(
             session_id=session_id, device_token=device_token
         ).first()
         if not participant:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Вы не участник стола")
-        if participant.status not in SessionParticipant.CAN_ORDER:
+        can_order = participant.status in SessionParticipant.CAN_ORDER or (
+            # настройка филиала: pending-гость может заказывать без подтверждения
+            participant.status == SessionParticipant.PENDING
+            and branch.allow_order_without_approval
+        )
+        if not can_order:
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,
                 "Хост ещё не подтвердил вас — заказы недоступны",
@@ -84,6 +91,36 @@ class OrderService:
             await self.repo.add_item(order.id, menu_item, qty, comment)
             total += menu_item.price_minor * qty
         await self.repo.set_total(order, total)
+
+        # auto-режим филиала: заказ минует модерацию и сразу уходит на кухню
+        if branch.moderation_mode == "auto":
+            order.status = Order.APPROVED
+            await self.repo.save(order)
+
+        return await self.order_detail(order.id)
+
+    async def cancel_by_guest(
+        self, session_id: int, order_id: int, device_token: str, reason: str | None
+    ) -> dict:
+        """Гость отменяет свой заказ (хост — любой заказ стола), пока он не на кухне."""
+        order = await self.repo.order_with_items(order_id)
+        if not order or order.session_id != session_id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Заказ не найден")
+        me = await SessionParticipant.filter(
+            session_id=session_id, device_token=device_token
+        ).first()
+        if not me:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Вы не участник стола")
+        is_host = me.status == SessionParticipant.HOST
+        if order.participant_id != me.id and not is_host:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Можно отменять только свои заказы")
+        if order.status not in (Order.PENDING, Order.APPROVED):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "Заказ уже готовится — отмена невозможна"
+            )
+        order.status = Order.CANCELLED
+        order.reject_reason = reason
+        await self.repo.save(order)
         return await self.order_detail(order.id)
 
     async def order_detail(self, order_id: int) -> dict:
@@ -138,10 +175,34 @@ class OrderService:
         orders, total = await self.repo.list_by_session(session_id, limit, offset)
         return [self._serialize(o) for o in orders], total
 
-    # ── Официант (модерация) ─────────────────────────────────────────────────
+    # ── Официант (модерация) / CRM ───────────────────────────────────────────
     async def moderation_queue(self, branch_id: int, limit: int, offset: int) -> tuple[list[dict], int]:
         orders, total = await self.repo.pending_for_branch(branch_id, limit, offset)
         return [self._serialize(o) for o in orders], total
+
+    async def list_branch_orders(
+        self, branch_id: int, limit: int, offset: int,
+        status_filter=None, table_id=None,
+    ) -> tuple[list[dict], int]:
+        orders, total = await self.repo.list_for_branch(
+            branch_id, limit, offset, status_filter, table_id
+        )
+        return [self._serialize(o) for o in orders], total
+
+    async def staff_cancel(
+        self, branch_id: int, order_id: int, employee_id, reason: str | None
+    ) -> dict:
+        """Отмена заказа персоналом: нельзя отменить выданный заказ."""
+        order = await self._order_in_branch(branch_id, order_id)
+        if order.status in (Order.SERVED, Order.CANCELLED, Order.REJECTED):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, f"Заказ в статусе {order.status} — отмена невозможна"
+            )
+        order.status = Order.CANCELLED
+        order.reject_reason = reason
+        order.moderated_by_id = employee_id
+        await self.repo.save(order)
+        return await self.order_detail(order.id)
 
     async def approve(self, branch_id: int, order_id: int, employee_id) -> dict:
         order = await self._pending_order(branch_id, order_id)
@@ -161,7 +222,59 @@ class OrderService:
     # ── Кухня (KDS) ──────────────────────────────────────────────────────────
     async def kitchen_board(self, branch_id: int, limit: int, offset: int) -> tuple[list[dict], int]:
         orders, total = await self.repo.kitchen_for_branch(branch_id, limit, offset)
-        return [self._serialize(o) for o in orders], total
+        return [self._kds_serialize(o) for o in orders], total
+
+    async def kds_order_detail(self, branch_id: int, order_id: int) -> dict:
+        order = await self.repo.order_with_items(order_id)
+        if not order or order.session.table.branch_id != branch_id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Заказ не найден")
+        return self._kds_serialize(order)
+
+    def _kds_serialize(self, order: Order) -> dict:
+        """Компактный KdsOrder: кухне не нужны CRM-поля (модерация, суммы)."""
+        table = order.session.table if order.session else None
+        return {
+            "id": order.id,
+            "table_title": (table.title or table.number) if table else None,
+            "table_zone": table.zone if table else None,
+            "status": order.status,
+            "comment": order.comment,
+            "created_at": order.created_at.isoformat() if order.created_at else None,
+            "items": [
+                {
+                    "id": it.id,
+                    "title_snapshot": it.title_snapshot,
+                    "quantity": it.qty,
+                    "comment": it.comment,
+                    # item-level статусы — фаза 3; пока статус позиции = статус заказа
+                    "status": order.status,
+                }
+                for it in order.items
+            ],
+        }
+
+    # ── Сводка филиала ───────────────────────────────────────────────────────
+    async def branch_summary(self, branch_id: int) -> dict:
+        from app.models import MenuItem, Table, TableSession
+
+        return {
+            "active_sessions_count": await TableSession.filter(
+                table__branch_id=branch_id, status=TableSession.OPEN
+            ).count(),
+            "pending_orders_count": await Order.filter(
+                session__table__branch_id=branch_id, status=Order.PENDING
+            ).count(),
+            "cooking_orders_count": await Order.filter(
+                session__table__branch_id=branch_id, status=Order.COOKING
+            ).count(),
+            "ready_orders_count": await Order.filter(
+                session__table__branch_id=branch_id, status=Order.READY
+            ).count(),
+            "unavailable_items_count": await MenuItem.filter(
+                category__branch_id=branch_id, is_available=False
+            ).count(),
+            "tables_count": await Table.filter(branch_id=branch_id).count(),
+        }
 
     async def change_status(self, branch_id: int, order_id: int, new_status: str) -> dict:
         order = await self._order_in_branch(branch_id, order_id)

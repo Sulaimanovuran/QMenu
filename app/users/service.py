@@ -1,6 +1,6 @@
 import hashlib
 from datetime import datetime, timedelta, timezone
-from typing import Annotated
+from typing import Annotated, Optional
 
 import jwt
 from fastapi import Depends, HTTPException, status
@@ -123,6 +123,95 @@ class UserService:
 
     async def logout(self, raw_refresh_token: str) -> None:
         await RefreshToken.filter(token_hash=_hash_token(raw_refresh_token)).update(revoked=True)
+
+    # ── CRM: управление пользователями ───────────────────────────────────────
+    async def _scope_user_ids(self, actor) -> Optional[set[int]]:
+        """Каких пользователей видит actor. None = всех (супер-админ).
+
+        Владелец видит сотрудников своих компаний и самого себя.
+        Иначе — 403.
+        """
+        if actor.is_superadmin:
+            return None
+        owned = await Company.filter(owner_id=actor.id).values_list("id", flat=True)
+        if not owned:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Недостаточно прав")
+        emp_user_ids = await Employee.filter(company_id__in=list(owned)).values_list(
+            "user_id", flat=True
+        )
+        return set(emp_user_ids) | {actor.id}
+
+    def _user_dict(self, u: User) -> dict:
+        return {
+            "id": u.id,
+            "login": u.login,
+            "full_name": u.full_name,
+            "phone": u.phone,
+            "is_active": u.is_active,
+        }
+
+    async def list_users(
+        self, actor, limit: int, offset: int,
+        search: Optional[str] = None, is_active: Optional[bool] = None,
+    ) -> tuple[list[dict], int]:
+        from tortoise.expressions import Q
+
+        scope = await self._scope_user_ids(actor)
+        qs = User.all()
+        if scope is not None:
+            qs = qs.filter(id__in=list(scope))
+        if search:
+            qs = qs.filter(Q(login__icontains=search) | Q(full_name__icontains=search))
+        if is_active is not None:
+            qs = qs.filter(is_active=is_active)
+        total = await qs.count()
+        users = await qs.offset(offset).limit(limit).all()
+        return [self._user_dict(u) for u in users], total
+
+    async def create_user(self, actor, data) -> dict:
+        # создавать пользователей может супер-админ или владелец компании
+        if not actor.is_superadmin:
+            if not await Company.filter(owner_id=actor.id).exists():
+                raise HTTPException(status.HTTP_403_FORBIDDEN, "Недостаточно прав")
+        if await User.get_or_none(login=data.login):
+            raise AppError(
+                status.HTTP_409_CONFLICT, "LOGIN_TAKEN",
+                "Проверьте поля формы",
+                {"login": ["Логин уже занят"]},
+            )
+        user = User(
+            login=data.login, full_name=data.full_name,
+            phone=data.phone, is_active=data.is_active,
+        )
+        user.set_password(data.password)
+        await user.save()
+        return self._user_dict(user)
+
+    async def _scoped_user(self, actor, user_id: int) -> User:
+        scope = await self._scope_user_ids(actor)
+        if scope is not None and user_id not in scope:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Пользователь не найден")
+        user = await User.get_or_none(id=user_id)
+        if not user:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Пользователь не найден")
+        return user
+
+    async def get_user(self, actor, user_id: int) -> dict:
+        return self._user_dict(await self._scoped_user(actor, user_id))
+
+    async def update_user(self, actor, user_id: int, patch: dict) -> dict:
+        user = await self._scoped_user(actor, user_id)
+        for field, value in patch.items():
+            setattr(user, field, value)
+        await user.save()
+        return self._user_dict(user)
+
+    async def reset_password(self, actor, user_id: int, password: str) -> None:
+        user = await self._scoped_user(actor, user_id)
+        user.set_password(password)
+        await user.save()
+        # все refresh-токены пользователя перестают действовать
+        await RefreshToken.filter(user_id=user_id).update(revoked=True)
 
     async def get_me(self, user: GetUser) -> dict:  # type: ignore
         if user.is_superadmin:

@@ -19,6 +19,12 @@ class CompanyService:
     async def create_company(self, data: CompanyIn, owner_id: int) -> Company:
         return await self.repo.create_company(data, owner_id)
 
+    async def update_company(
+        self, company_id: int, patch: dict, owner_id: int, is_superadmin: bool = False
+    ) -> Company:
+        company = await self.get_owned_company(company_id, owner_id, is_superadmin)
+        return await self.repo.update_company(company, patch)
+
     async def get_owned_company(
         self, company_id: int, owner_id: int, is_superadmin: bool = False
     ) -> Company:

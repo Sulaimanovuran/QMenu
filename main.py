@@ -1,8 +1,10 @@
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from tortoise import Tortoise
 from tortoise.contrib.fastapi import register_tortoise
 
@@ -21,10 +23,12 @@ from app.common.errors import (
 async def lifespan(app: FastAPI):
     # сидируем фиксированные роли и стартового админа
     from app.common.roles import seed_roles
+    from app.common.seed import seed_restaurant_types
     from app.users.service import UserService
     from app.users.repository import UserRepository
 
     await seed_roles()
+    await seed_restaurant_types()
     await UserService(UserRepository()).create_admin()
     yield
 
@@ -50,6 +54,10 @@ app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(Exception, unhandled_exception_handler)
 
 app.include_router(api_router, prefix="/api/v1")
+
+# отдача загруженных картинок (dev; на проде — S3/CDN)
+os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
 
 
 @app.get("/health", tags=["Health"])

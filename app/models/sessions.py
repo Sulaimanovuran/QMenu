@@ -50,6 +50,7 @@ class SessionParticipant(Model):
     PENDING = "pending"
     APPROVED = "approved"
     REJECTED = "rejected"
+    LEFT = "left"
 
     # статусы, при которых участник может делать заказы
     CAN_ORDER = (HOST, APPROVED)

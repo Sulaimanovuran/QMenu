@@ -57,6 +57,24 @@ class OrderRepository:
         items = await qs.prefetch_related(*_DETAIL_PREFETCH).offset(offset).limit(limit).all()
         return items, total
 
+    async def list_for_branch(
+        self,
+        branch_id: int,
+        limit: int,
+        offset: int,
+        status: str | None = None,
+        table_id: int | None = None,
+    ) -> tuple[list[Order], int]:
+        """История заказов филиала с фильтрами (CRM)."""
+        qs = Order.filter(session__table__branch_id=branch_id)
+        if status:
+            qs = qs.filter(status=status)
+        if table_id is not None:
+            qs = qs.filter(session__table_id=table_id)
+        total = await qs.count()
+        items = await qs.prefetch_related(*_DETAIL_PREFETCH).offset(offset).limit(limit).all()
+        return items, total
+
     async def pending_for_branch(self, branch_id: int, limit: int, offset: int) -> tuple[list[Order], int]:
         """Очередь модерации: pending-заказы всех сессий филиала."""
         qs = Order.filter(status=Order.PENDING, session__table__branch_id=branch_id)

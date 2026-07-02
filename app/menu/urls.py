@@ -1,8 +1,13 @@
 """Эндпоинты меню. Управление — для персонала (CRM); публичное меню — гостю (public)."""
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.models import GetCategory, GetMenuItem
-from app.common.schemas import CategoryIn, CategoryUpdate, MenuItemIn, MenuItemUpdate
+from app.models import Branch, GetCategory, GetMenuItem
+from app.models.users import GetUser
+from app.users.service import get_current_user
+from app.common.schemas import (
+    CategoryIn, CategoryReorder, CategoryUpdate, ItemReorder,
+    MenuCopyFrom, MenuItemAvailability, MenuItemIn, MenuItemUpdate,
+)
 from app.common.security import require_manage
 from app.common.pagination import PageParams
 from app.common.responses import ok, paginated
@@ -94,3 +99,48 @@ async def update_item(
 @menuRouter.delete("/branches/{branch_id}/items/{item_id}", status_code=204)
 async def delete_item(branch_id: int, item_id: int, _=Depends(MANAGE)):
     await service.delete_item(branch_id, item_id)
+
+
+@menuRouter.post("/branches/{branch_id}/items/{item_id}/availability")
+async def set_item_availability(
+    branch_id: int, item_id: int, data: MenuItemAvailability, _=Depends(MANAGE)
+):
+    """Быстро включить/выключить блюдо или отправить в стоп-лист."""
+    item = await service.set_availability(branch_id, item_id, data)
+    return ok(await GetMenuItem.from_tortoise_orm(item), "Доступность обновлена")
+
+
+# ── Порядок категорий и блюд ─────────────────────────────────────────────────
+@menuRouter.post("/branches/{branch_id}/categories/reorder")
+async def reorder_categories(branch_id: int, data: CategoryReorder, _=Depends(MANAGE)):
+    await service.reorder_categories(branch_id, data)
+    return ok(None, "Порядок категорий обновлён")
+
+
+@menuRouter.post("/branches/{branch_id}/items/reorder")
+async def reorder_items(branch_id: int, data: ItemReorder, _=Depends(MANAGE)):
+    await service.reorder_items(branch_id, data)
+    return ok(None, "Порядок блюд обновлён")
+
+
+# ── Копирование меню между филиалами (owner/super_admin) ─────────────────────
+@menuRouter.post("/branches/{branch_id}/menu/copy-from")
+async def copy_menu_from(
+    branch_id: int,
+    data: MenuCopyFrom,
+    user: GetUser = Depends(get_current_user),  # type: ignore
+):
+    """Скопировать категории/блюда из другого филиала в текущий."""
+    # доступ к обоим филиалам: супер-админ или владелец компаний обоих филиалов
+    if not user.is_superadmin:
+        for bid in (branch_id, data.source_branch_id):
+            branch = await Branch.filter(id=bid).prefetch_related("company").first()
+            if not branch:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Филиал не найден")
+            if branch.company.owner_id != user.id:
+                raise HTTPException(
+                    status.HTTP_403_FORBIDDEN,
+                    "Копировать меню может только владелец обоих филиалов",
+                )
+    result = await service.copy_from(branch_id, data)
+    return ok(result, "Меню скопировано")

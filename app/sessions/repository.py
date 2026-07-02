@@ -50,3 +50,35 @@ class SessionRepository:
         return await SessionParticipant.filter(
             session_id=session_id, status=SessionParticipant.PENDING
         ).all()
+
+    # ── CRM ──────────────────────────────────────────────────────────────────
+    async def list_branch_sessions(
+        self,
+        branch_id: int,
+        limit: int,
+        offset: int,
+        status: Optional[str] = None,
+        table_id: Optional[int] = None,
+    ) -> tuple[list[TableSession], int]:
+        qs = TableSession.filter(table__branch_id=branch_id)
+        if status:
+            qs = qs.filter(status=status)
+        if table_id is not None:
+            qs = qs.filter(table_id=table_id)
+        total = await qs.count()
+        items = (
+            await qs.prefetch_related("table")
+            .order_by("-opened_at")
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+        return items, total
+
+    async def get_session_full(self, session_id: int) -> Optional[TableSession]:
+        """Сессия с цепочкой до филиала, участниками и заказами (CRM-деталка)."""
+        return (
+            await TableSession.filter(id=session_id)
+            .prefetch_related("table__branch", "participants", "orders__items", "orders__participant")
+            .first()
+        )

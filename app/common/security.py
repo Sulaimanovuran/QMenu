@@ -15,6 +15,32 @@ def new_token(nbytes: int = 24) -> str:
     return secrets.token_urlsafe(nbytes)
 
 
+async def check_branch_access(branch_id: int, user, *allowed_codes: str) -> None:
+    """Проверка доступа к филиалу, когда branch_id известен только после запроса.
+
+    Та же логика, что в require_manage (супер-админ / владелец компании /
+    сотрудник с ролью), но вызывается из кода эндпоинта, а не как Depends —
+    для путей вида /crm/sessions/{session_id}, где филиал выводится из сущности.
+    """
+    from app.models import Branch
+
+    if user.is_superadmin:
+        return
+    branch = await Branch.filter(id=branch_id).prefetch_related("company").first()
+    if not branch:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Филиал не найден")
+    if branch.company.owner_id == user.id:
+        return
+    emp = (
+        await Employee.filter(user_id=user.id, branch_id=branch_id, is_active=True)
+        .prefetch_related("role")
+        .first()
+    )
+    if emp and emp.role.code in allowed_codes:
+        return
+    raise HTTPException(status.HTTP_403_FORBIDDEN, "Недостаточно прав")
+
+
 async def get_current_employee(
     branch_id: int,
     user: GetUser = Depends(get_current_user),  # type: ignore

@@ -3,6 +3,7 @@ from typing import Optional
 
 from app.models import Company, Branch
 from app.common.schemas import CompanyIn, BranchIn, BranchUpdate
+from app.common.slug import unique_slug
 
 
 class CompanyRepository:
@@ -22,7 +23,26 @@ class CompanyRepository:
         return await qs.first()
 
     async def create_company(self, data: CompanyIn, owner_id: int) -> Company:
-        return await Company.create(title=data.title, owner_id=owner_id)
+        slug = await unique_slug(Company, data.title)
+        return await Company.create(
+            slug=slug,
+            title=data.title,
+            description=data.description,
+            short_description=data.short_description,
+            type_codes=data.type_codes,
+            logo_url=data.logo_url,
+            cover_url=data.cover_url,
+            owner_id=owner_id,
+            status=data.status,
+            is_published=data.is_published,
+            is_active=data.is_active,
+        )
+
+    async def update_company(self, company: Company, patch: dict) -> Company:
+        for field, value in patch.items():
+            setattr(company, field, value)
+        await company.save()
+        return company
 
     async def delete_company(self, company: Company) -> None:
         await company.delete()
@@ -38,15 +58,38 @@ class CompanyRepository:
         return await Branch.filter(id=branch_id).first()
 
     async def create_branch(self, data: BranchIn, company_id: int) -> Branch:
+        slug = await unique_slug(Branch, data.title)
+        schedule = [d.model_dump() for d in data.schedule]
         return await Branch.create(
             company_id=company_id,
+            slug=slug,
             title=data.title,
             address=data.address,
+            city=data.city,
+            latitude=data.latitude,
+            longitude=data.longitude,
+            phone=data.phone,
+            cover_url=data.cover_url,
+            working_hours=data.working_hours,
+            schedule=schedule,
             moderation_mode=data.moderation_mode,
+            status=data.status,
+            is_published=data.is_published,
+            is_active=data.is_active,
         )
 
     async def update_branch(self, branch: Branch, data: BranchUpdate) -> Branch:
         patch = data.model_dump(exclude_unset=True)
+        if "schedule" in patch and patch["schedule"] is not None:
+            patch["schedule"] = [
+                d if isinstance(d, dict) else d.model_dump() for d in patch["schedule"]
+            ]
+        for field, value in patch.items():
+            setattr(branch, field, value)
+        await branch.save()
+        return branch
+
+    async def update_branch_fields(self, branch: Branch, patch: dict) -> Branch:
         for field, value in patch.items():
             setattr(branch, field, value)
         await branch.save()
